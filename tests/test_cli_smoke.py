@@ -1,0 +1,69 @@
+"""CLI smoke tests via click's CliRunner, using a temp project scope."""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+from click.testing import CliRunner
+
+from geno_specs.cli import main
+
+
+@pytest.fixture
+def project(tmp_path, monkeypatch):
+    # Point scope resolution at an isolated project dir.
+    proj = tmp_path / ".geno" / "geno-specs"
+    proj.mkdir(parents=True)
+    monkeypatch.setenv("GENO_SPECS_DIR", str(proj))
+    monkeypatch.chdir(tmp_path)
+    return proj
+
+
+def test_templates_lists_six(project):
+    r = CliRunner().invoke(main, ["templates"])
+    assert r.exit_code == 0
+    for name in ("bug-fix", "feature", "refactor", "migration", "test", "review"):
+        assert name in r.output
+
+
+def test_create_list_show(project):
+    run = CliRunner().invoke
+    r = run(main, ["create", "fix", "login", "bug", "--template", "bug-fix", "-t", "auth"])
+    assert r.exit_code == 0, r.output
+    spec_id = r.output.split()[0]
+
+    r = run(main, ["list"])
+    assert spec_id in r.output
+
+    r = run(main, ["show", spec_id, "--json"])
+    assert r.exit_code == 0 and '"id"' in r.output
+
+    r = run(main, ["show", spec_id, "--prompt"])
+    assert r.exit_code == 0 and "fix login bug" in r.output.lower()
+
+
+def test_lifecycle_via_cli(project):
+    run = CliRunner().invoke
+    spec_id = run(main, ["create", "thing"]).output.split()[0]
+    assert run(main, ["ready", spec_id]).exit_code == 0
+    r = run(main, ["run", spec_id])
+    assert r.exit_code == 0 and "thing" in r.output.lower()  # run prints the prompt
+    assert run(main, ["done", spec_id]).exit_code == 0
+
+
+def test_edit_appends(project):
+    run = CliRunner().invoke
+    spec_id = run(main, ["create", "thing"]).output.split()[0]
+    r = run(main, [
+        "edit", spec_id,
+        "--add-input", "a.py:src",
+        "--add-output", "out.txt:contains X",
+        "--add-check", "pytest:exit 0",
+        "--add-step", "do it",
+        "--agent-cap", "python",
+        "--agent-model", "opus",
+    ])
+    assert r.exit_code == 0, r.output
+    j = run(main, ["show", spec_id, "--json"]).output
+    assert "a.py" in j and "out.txt" in j and "pytest" in j and "python" in j
