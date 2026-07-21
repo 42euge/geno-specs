@@ -103,35 +103,68 @@ def feature_spec_path(repo_root: Path | None, feature_name: str) -> Path:
     return features_dir(repo_root) / f"{slug}.genospecs.yaml"
 
 
-FEATURE_TEMPLATE = """\
-name: {name}
-status: draft
-description: >-
-  {description}
+# Guidance for the optional multi-repo / phased / architecture fields. Appended
+# as a trailing comment block — comments are documentation only (not modeled by
+# the parser), so they never affect round-tripping.
+_OPTIONAL_FIELDS_GUIDE = """\
 
-inputs:
-  # - path: src/module.py
-  #   role: Target module
-
-outputs:
-  # - path: src/module.py
-  #   check: "contains 'class NewFeature'"
-
-steps:
-  - Explore the relevant code
-  - Implement the feature
-  - Add tests
-  - Update documentation
-
-acceptance:
-  - Feature works as described
-  - Tests pass
-  - No regressions
-
-checks:
-  # - run: pytest tests/
-  #   expect: exit 0
+# ─── optional: multi-repo / phased / architecture specs ───────────────
+# Omit these for a simple feature; use them for an ecosystem-layer design.
+#
+# composes:        # repos this spec composes (not reimplements)
+#   - repo: geno-loops
+#     role: loop edges
+#     optional: false
+# phases:          # ordered delivery phases; each may gate the next
+#   - id: p0
+#     title: Foundation
+#     goal: Define the IR
+#     gates: [p1]
+#     done: false
+# open_questions:  # design decisions shaping the work
+#   - id: q1
+#     question: What is the definition format?
+#     options: [a, b, c]
+#     lean: ""
+#     decision: ""
+#     status: open
+# depends_on:      # spec ids that must be `done` first
+#   - 20260101-some-other-spec
+# deferred:        # explicitly out-of-scope-for-now
+#   - title: geno-meta as an instance of this system
+#     why: proof-of-generality, not a v1 dependency
+# subspecs:        # nest sub-specs (a spec inside a spec), recursively
+#   - name: sub-feature
+#     status: draft
+#     steps: [do the thing]
 """
+
+
+def _feature_template_node(name: str, description: str) -> "Node":
+    """Build the default `feature` spec as a Node tree.
+
+    Generating the on-disk YAML from the same Node model the parser reads means
+    the emitted file and the parser can never drift.
+    """
+    from geno_specs.nodes import Node
+
+    return Node(type="spec", data={
+        "title": name,
+        "status": "draft",
+        "context": description or "Describe this feature.",
+    }, children=[
+        Node("steps", data={"items": [
+            "Explore the relevant code",
+            "Implement the feature",
+            "Add tests",
+            "Update documentation",
+        ]}),
+        Node("acceptance", data={"items": [
+            "Feature works as described",
+            "Tests pass",
+            "No regressions",
+        ]}),
+    ])
 
 
 def create_feature_spec(
@@ -139,16 +172,15 @@ def create_feature_spec(
     name: str,
     description: str = "",
 ) -> Path:
-    """Create a feature spec YAML file."""
+    """Create a feature spec YAML file (generated from the Node model)."""
+    from geno_specs import nodes
+
     path = feature_spec_path(repo_root, name)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if path.exists():
         raise FileExistsError(f"Feature spec already exists: {path}")
 
-    content = FEATURE_TEMPLATE.format(
-        name=name,
-        description=description or "Describe this feature.",
-    )
-    path.write_text(content, encoding="utf-8")
+    body = nodes._dump(_feature_template_node(name, description))
+    path.write_text(body + _OPTIONAL_FIELDS_GUIDE, encoding="utf-8")
     return path

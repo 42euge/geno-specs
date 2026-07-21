@@ -1,0 +1,20 @@
+[project]
+name = "geno-specs"
+version = "0.2.0"
+description = "Structured execution specs for coding agents and dev loops — a composable tree of typed section nodes"
+requires-python = ">=3.10"
+dependencies = ["click>=8.0", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+site = ["mkdocs>=1.5", "mkdocs-material>=9.0"]
+
+[project.scripts]
+geno-specs = "geno_specs.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["geno_specs*"]
