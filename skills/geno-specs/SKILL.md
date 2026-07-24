@@ -3,7 +3,7 @@ name: geno-specs
 description: >-
   Structured execution specs for coding agents and dev loops.
   Use when user says /geno-specs-create, /geno-specs-run,
-  /geno-specs-list, /geno-specs-validate, or /geno-specs-show.
+  /geno-specs-list, /geno-specs-validate, /geno-specs-show, or /geno-specs-wiki.
 license: MIT
 metadata:
   author: 42euge
@@ -23,6 +23,7 @@ Create, manage, and execute structured specs that agents (`/geno-agents`) or dev
 | `/geno-specs-list` | List specs with optional status/tag filters |
 | `/geno-specs-show [spec-id]` | Show a spec's full contents or render as agent prompt |
 | `/geno-specs-validate [spec-id]` | Run a spec's completion checks (output existence, commands) |
+| `/geno-specs-wiki` | Generate an LLM-wiki — deep, linked per-feature design-doc pages from specs |
 
 ## Spec Lifecycle
 

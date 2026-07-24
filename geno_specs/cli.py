@@ -329,6 +329,70 @@ def validate(spec_id: str, global_: bool, project_: bool):
 # ─── templates ────────────────────────────────────────────────────────
 
 
+@main.command()
+@click.option("--out", "out_dir", default="docs/features",
+              help="Output directory for the wiki (default: docs/features).")
+@click.option("--spec", "one_spec", default=None,
+              help="Generate a deep page for just this spec id (still writes index).")
+@click.option("--status", "status_filter", default=None,
+              help="Only include specs with this status.")
+@click.option("--stdout", "to_stdout", is_flag=True,
+              help="Print the page(s) to stdout instead of writing files.")
+@_scope_options
+def wiki(
+    out_dir: str,
+    one_spec: str | None,
+    status_filter: str | None,
+    to_stdout: bool,
+    global_: bool,
+    project_: bool,
+):
+    """Generate an LLM-wiki: deep, linked per-feature pages from specs.
+
+    Each spec becomes a page that expands how the feature should work —
+    behaviour, UI, data flow, conventions, acceptance — cross-linked into a
+    browsable wiki (drops into an MkDocs docs/ tree).
+    """
+    from pathlib import Path
+    from geno_specs import wiki as wiki_mod
+
+    scope = _pick_scope(global_, project_)
+    specs = loader.load_all(scope)
+    if status_filter:
+        specs = [s for s in specs if s.status == status_filter]
+    if not specs:
+        click.echo("(no specs to render)", err=True)
+        sys.exit(1)
+
+    if one_spec:
+        target = next((s for s in specs if s.id == one_spec), None)
+        if not target:
+            click.echo(f"error: spec {one_spec!r} not found", err=True)
+            sys.exit(1)
+        ids = {s.id for s in specs}
+        page = wiki_mod.render_feature_page(target, all_ids=ids)
+        if to_stdout:
+            click.echo(page)
+            return
+        files = {
+            f"{wiki_mod._slug(target.id)}.md": page,
+            "index.md": wiki_mod.render_index(specs),
+        }
+    else:
+        files = wiki_mod.render_wiki(specs)
+        if to_stdout:
+            for name, body in files.items():
+                click.echo(f"\n===== {name} =====\n{body}")
+            return
+
+    dest = Path(out_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    for name, body in files.items():
+        (dest / name).write_text(body, encoding="utf-8")
+        click.echo(f"  wrote {dest / name}")
+    click.echo(f"\n{len(files)} page(s) → {dest}")
+
+
 @main.command("templates")
 def list_templates():
     """List available spec templates."""
