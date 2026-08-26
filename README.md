@@ -23,6 +23,11 @@ geno-tools install specs
 ## Quick start
 
 ```bash
+# (optional) seed one fully-filled example spec to see what a good spec looks like
+geno-specs demo
+geno-specs show demo-http-retry-backoff
+geno-specs demo --remove   # clean it up when you are done looking
+
 # Create a spec from a template
 geno-specs create "Fix token refresh" --template bug-fix --tag auth
 

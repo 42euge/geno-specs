@@ -52,3 +52,7 @@ draft → ready → running → done
                        → failed → ready (retry)
 Any state → abandoned
 ```
+
+## First run
+
+On a fresh install there are no specs yet. `geno-specs demo` seeds one fully-filled example spec (id `demo-http-retry-backoff`, tagged `demo`) so `geno-specs list`/`show` are never empty on first use. `geno-specs demo --remove` deletes it again.
