@@ -27,6 +27,8 @@ from typing import Any, Callable
 from geno_specs.models import (
     AgentRequirements,
     Check,
+    Failure,
+    FailureCheck,
     InputFile,
     OutputFile,
 )
@@ -331,6 +333,7 @@ register("open_questions", _open_questions_handler())
 _SPEC_SCALAR_KEYS = ("status", "tags", "context", "template")
 # Order sections are emitted in (diff-friendly, human-readable).
 _SECTION_ORDER = (
+    "last_failure",
     "inputs", "outputs", "steps", "acceptance", "checks",
     "composes", "phases", "open_questions", "depends_on", "deferred",
     "agent", "subspecs",
@@ -362,6 +365,69 @@ def _agent_handler() -> Handler:
 
 
 register("agent", _agent_handler())
+
+
+def _failure_handler() -> Handler:
+    def parse(value):
+        v = value or {}
+        checks = [
+            FailureCheck(
+                kind=str(c.get("kind", "")),
+                target=str(c.get("target", "")),
+                message=str(c.get("message", "")),
+                stdout=str(c.get("stdout", "")),
+                stderr=str(c.get("stderr", "")),
+                exit_code=c.get("exit_code"),
+            )
+            for c in (v.get("checks") or [])
+        ]
+        failure = Failure(timestamp=str(v.get("timestamp", "")), checks=checks)
+        return Node(type="last_failure", data={"value": failure})
+
+    def dump_(node):
+        f: Failure = node.data["value"]
+        return {
+            "timestamp": f.timestamp,
+            "checks": [
+                {
+                    "kind": c.kind,
+                    "target": c.target,
+                    "message": c.message,
+                    "stdout": c.stdout,
+                    "stderr": c.stderr,
+                    "exit_code": c.exit_code,
+                }
+                for c in f.checks
+            ],
+        }
+
+    def render_(node):
+        f: Failure = node.data["value"]
+        if not f.checks:
+            return ""
+        lines = [f"## Last failure ({f.timestamp})",
+                 "The previous attempt at this spec failed validation. Fix these before re-validating:", ""]
+        for c in f.checks:
+            header = f"- **[{c.kind}]** `{c.target}`"
+            if c.exit_code is not None:
+                header += f" → exit {c.exit_code}"
+            if c.message:
+                header += f" — {c.message}"
+            lines.append(header)
+            if c.stdout.strip():
+                lines.append("  stdout:")
+                for line in c.stdout.strip().splitlines():
+                    lines.append(f"    {line}")
+            if c.stderr.strip():
+                lines.append("  stderr:")
+                for line in c.stderr.strip().splitlines():
+                    lines.append(f"    {line}")
+        return "\n".join(lines) + "\n"
+
+    return Handler(parse=parse, dump=dump_, render=render_)
+
+
+register("last_failure", _failure_handler())
 
 
 def _spec_from_mapping(m: dict[str, Any]) -> Node:

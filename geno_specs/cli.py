@@ -8,7 +8,15 @@ import sys
 import click
 
 from geno_specs import __version__, loader, templates
-from geno_specs.models import InputFile, OutputFile, Check, AgentRequirements, VALID_STATUSES
+from geno_specs.models import (
+    InputFile,
+    OutputFile,
+    Check,
+    AgentRequirements,
+    Failure,
+    FailureCheck,
+    VALID_STATUSES,
+)
 from geno_specs.paths import Scope, ensure_structure, resolve_scope
 from geno_specs.renderer import render_json, render_prompt
 
@@ -265,8 +273,15 @@ def abandon(spec_id: str, global_: bool, project_: bool):
 @click.argument("spec_id")
 @_scope_options
 def validate(spec_id: str, global_: bool, project_: bool):
-    """Check a spec's completion criteria (output checks + validation commands)."""
+    """Check a spec's completion criteria (output checks + validation commands).
+
+    On failure, the full stdout/stderr/exit code of every failing check is
+    captured into ``spec.last_failure`` (not just pass/fail) so the next
+    ``run`` after a failed → ready retry sees exactly what broke. A clean
+    pass clears any stale ``last_failure`` from a previous attempt.
+    """
     import subprocess
+    from datetime import datetime, timezone
     from pathlib import Path
 
     scope = _pick_scope(global_, project_)
@@ -278,12 +293,16 @@ def validate(spec_id: str, global_: bool, project_: bool):
 
     passed = 0
     failed = 0
+    failure_checks: list[FailureCheck] = []
 
     for out in spec.outputs:
         p = Path(out.path)
         if not p.exists():
             click.echo(f"  FAIL  output missing: {out.path}")
             failed += 1
+            failure_checks.append(FailureCheck(
+                kind="output", target=out.path, message="output file missing",
+            ))
             continue
         if out.check:
             content = p.read_text(encoding="utf-8", errors="replace")
@@ -295,6 +314,11 @@ def validate(spec_id: str, global_: bool, project_: bool):
                 else:
                     click.echo(f"  FAIL  {out.path}: missing {needle!r}")
                     failed += 1
+                    failure_checks.append(FailureCheck(
+                        kind="output", target=out.path,
+                        message=f"expected to contain {needle!r} but did not",
+                        stdout=content[:2000],
+                    ))
             else:
                 click.echo(f"  SKIP  {out.path}: unknown check syntax {out.check!r}")
         else:
@@ -318,11 +342,39 @@ def validate(spec_id: str, global_: bool, project_: bool):
                     for line in result.stderr.strip().splitlines()[:5]:
                         click.echo(f"         {line}")
                 failed += 1
-        except subprocess.TimeoutExpired:
+                failure_checks.append(FailureCheck(
+                    kind="check", target=chk.run,
+                    message=f"exit {result.returncode} (expected {expect_code})",
+                    stdout=result.stdout, stderr=result.stderr,
+                    exit_code=result.returncode,
+                ))
+        except subprocess.TimeoutExpired as e:
             click.echo(f"  FAIL  `{chk.run}` → timeout")
             failed += 1
+            failure_checks.append(FailureCheck(
+                kind="check", target=chk.run, message="timed out after 120s",
+                stdout=(e.stdout or "") if isinstance(e.stdout, str) else "",
+                stderr=(e.stderr or "") if isinstance(e.stderr, str) else "",
+            ))
 
     click.echo(f"\n{passed} passed, {failed} failed")
+
+    if failed:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        spec.last_failure = Failure(timestamp=now, checks=failure_checks)
+        loader.save(scope, spec)
+
+        click.echo("\nwhy validation failed:")
+        for c in failure_checks:
+            detail = f"  - [{c.kind}] {c.target}: {c.message}"
+            if c.exit_code is not None:
+                detail += f" (exit {c.exit_code})"
+            click.echo(detail)
+    elif spec.last_failure is not None:
+        # Clean pass — drop the stale record from a previous attempt.
+        spec.last_failure = None
+        loader.save(scope, spec)
+
     sys.exit(1 if failed else 0)
 
 

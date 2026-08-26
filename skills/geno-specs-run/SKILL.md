@@ -62,6 +62,11 @@ geno-specs run <spec-id>
 
 This prints the rendered agent prompt. Read it to understand the full task.
 
+If this is a retry (the spec was previously `failed`), the rendered prompt
+opens with a `## Last failure` section showing exactly which check(s) failed
+last time, their exact stdout/stderr/exit code, and when. Read that first —
+it tells you what to fix before repeating the same mistake.
+
 ### 4. Execute
 
 Work through the spec's steps:

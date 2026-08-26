@@ -52,3 +52,34 @@ draft → ready → running → done
                        → failed → ready (retry)
 Any state → abandoned
 ```
+
+## Structured failure feedback (`last_failure`)
+
+A `Spec` carries an optional `last_failure` field (`geno_specs.models.Failure`,
+holding a `timestamp` and a list of `FailureCheck` records with `kind`
+("output" or "check"), `target`, `message`, `stdout`, `stderr`, and
+`exit_code`). It closes the loop between a failed `validate` run and the next
+`run` after a `failed → ready` retry, so the executing agent sees exactly
+what broke instead of starting blind — the same "raw output back into the
+prompt" pattern used by Aider and the SWE-bench FAIL_TO_PASS/PASS_TO_PASS
+harness.
+
+- **`geno-specs validate`** now captures the full stdout/stderr/exit code of
+  every failing output check and validation command (not just pass/fail),
+  writes them into `spec.last_failure`, and prints a "why validation failed"
+  summary. A clean pass clears any stale `last_failure` left over from a
+  previous attempt.
+- **`loader.set_failure(scope, spec_id, failure)`** transitions a spec to
+  `failed` and persists the `Failure` record in one call — the primitive
+  `cli.validate` uses instead of a bare `loader.transition(..., "failed")`.
+- **`loader.transition(..., "done")`** clears `last_failure` — a spec that
+  finishes has no unresolved failure to carry forward.
+- **`renderer.render_prompt`** surfaces `last_failure` (when present) as a
+  `## Last failure (<timestamp>)` section at the top of the rendered agent
+  prompt, above the spec's own inputs/steps/checks, listing each failed
+  check's target, message, and captured stdout/stderr.
+- On disk, `last_failure` is plain YAML frontmatter on the spec file
+  (`.genospecs.yaml`) — a `last_failure:` mapping with `timestamp` and
+  `checks:` — following the same format as every other section (`inputs`,
+  `checks`, `agent`, …). It round-trips through `nodes.parse`/`nodes.dump`
+  like any other registered section type.
