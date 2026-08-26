@@ -122,3 +122,49 @@ def test_list_unblocked_filter(project):
     run(main, ["ready", b_id])
     r = run(main, ["list", "--unblocked"])
     assert b_id in r.output
+
+def test_demo_seeds_and_shows(project):
+    run = CliRunner().invoke
+    r = run(main, ["demo"])
+    assert r.exit_code == 0, r.output
+    assert "demo-http-retry-backoff" in r.output
+    assert "(created)" in r.output
+
+    r = run(main, ["list"])
+    assert "demo-http-retry-backoff" in r.output
+    assert "demo" in r.output
+
+    r = run(main, ["show", "demo-http-retry-backoff"])
+    assert r.exit_code == 0
+    assert "retry" in r.output.lower()
+    assert "src/http_client.py" in r.output
+
+
+def test_demo_is_idempotent_not_duplicated(project):
+    run = CliRunner().invoke
+    run(main, ["demo"])
+    r = run(main, ["demo"])
+    assert r.exit_code == 0
+    assert "(overwritten)" in r.output
+
+    r = run(main, ["list"])
+    assert r.output.count("demo-http-retry-backoff") == 1
+
+
+def test_demo_remove(project):
+    run = CliRunner().invoke
+    run(main, ["demo"])
+    r = run(main, ["demo", "--remove"])
+    assert r.exit_code == 0
+    assert "removed" in r.output
+
+    r = run(main, ["list"])
+    assert "demo-http-retry-backoff" not in r.output
+
+
+def test_demo_remove_when_absent(project):
+    run = CliRunner().invoke
+    r = run(main, ["demo", "--remove"])
+    assert r.exit_code == 0
+    assert "not found" in r.output
+

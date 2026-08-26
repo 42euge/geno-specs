@@ -488,6 +488,99 @@ def list_templates():
         click.echo(f"  {tpl.name:<14} {tpl.description}")
 
 
+# ─── demo ─────────────────────────────────────────────────────────────
+
+DEMO_SPEC_ID = "demo-http-retry-backoff"
+
+
+def _build_demo_spec() -> "loader.Spec":
+    """Build the one seeded example spec: fully filled in, not placeholder text."""
+    from geno_specs.models import Spec
+
+    return Spec(
+        id=DEMO_SPEC_ID,
+        title="Add retry with backoff to HTTP client",
+        status="draft",
+        tags=["demo", "feature"],
+        template="feature",
+        context=(
+            "Our HTTP client (src/http_client.py) fails immediately on transient "
+            "errors (connection resets, 502/503/504) instead of retrying. Add "
+            "exponential backoff with jitter so calls survive brief upstream "
+            "blips without hammering the server."
+        ),
+        steps=[
+            "Read src/http_client.py to understand the current request path",
+            "Add a retry(max_attempts, base_delay) decorator with exponential "
+            "backoff + jitter (delay = base_delay * 2**attempt + random jitter)",
+            "Retry only on ConnectionError and HTTP 502/503/504; raise "
+            "immediately on 4xx",
+            "Wire the decorator onto HttpClient.get/post with max_attempts=3, "
+            "base_delay=0.5s",
+            "Add tests that simulate transient failures and assert the "
+            "eventual success + the retry count",
+        ],
+        acceptance=[
+            "A request that fails twice with 503 then succeeds returns the "
+            "successful response",
+            "A request that exhausts all attempts raises the original error",
+            "4xx responses are never retried",
+            "tests/test_http_client.py passes",
+        ],
+        inputs=[
+            InputFile(path="src/http_client.py", role="HTTP client to add retry logic to"),
+            InputFile(path="src/config.py", role="existing timeout settings, if any"),
+        ],
+        outputs=[
+            OutputFile(path="src/http_client.py", check="contains def retry"),
+            OutputFile(path="tests/test_http_client.py", check="contains test_retries_on_503"),
+        ],
+        checks=[
+            Check(run="pytest tests/test_http_client.py -q", expect="exit 0"),
+        ],
+        agent=AgentRequirements(capabilities=["python", "testing"], model="sonnet"),
+    )
+
+
+@main.command()
+@click.option("--remove", is_flag=True, help="Remove the seeded demo spec instead of creating it.")
+@_scope_options
+def demo(remove: bool, global_: bool, project_: bool):
+    """Seed (or remove) one fully-filled example spec.
+
+    On a fresh install `geno-specs list`/`show` are empty, which is the
+    classic first-five-minutes cold-start problem. This seeds ONE realistic
+    spec (id: demo-http-retry-backoff, tagged "demo") built on the `feature`
+    template, with concrete inputs/outputs/steps/checks already filled in —
+    run `geno-specs show demo-http-retry-backoff` to see what a good, fully
+    -filled spec looks like before writing your own.
+
+    Re-running `geno-specs demo` overwrites the seeded spec cleanly (same
+    fixed id, so it never duplicates). Use --remove to delete it once you no
+    longer need the example.
+    """
+    scope = _pick_scope(global_, project_)
+    path = loader.spec_path(scope, DEMO_SPEC_ID)
+
+    if remove:
+        if path.exists():
+            path.unlink()
+            click.echo(f"{DEMO_SPEC_ID}  removed")
+        else:
+            click.echo(f"{DEMO_SPEC_ID}  not found (nothing to remove)")
+        return
+
+    existed = path.exists()
+    spec = _build_demo_spec()
+    loader.save(scope, spec)
+
+    verb = "overwritten" if existed else "created"
+    click.echo(f"{spec.id}  ({verb})")
+    click.echo(f"  {path}")
+    click.echo(f"  geno-specs show {spec.id}   # see a fully-filled example")
+    click.echo("  geno-specs demo --remove    # clean it up")
+
+
 # ─── init ─────────────────────────────────────────────────────────────
 
 

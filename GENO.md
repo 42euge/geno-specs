@@ -152,3 +152,8 @@ harness.
   `checks:` — following the same format as every other section (`inputs`,
   `checks`, `agent`, …). It round-trips through `nodes.parse`/`nodes.dump`
   like any other registered section type.
+
+## First run
+
+On a fresh install there are no specs yet. `geno-specs demo` seeds one fully-filled example spec (id `demo-http-retry-backoff`, tagged `demo`) so `geno-specs list`/`show` are never empty on first use. `geno-specs demo --remove` deletes it again.
+
