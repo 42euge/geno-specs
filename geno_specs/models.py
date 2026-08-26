@@ -80,6 +80,37 @@ class AgentRequirements:
     model: str | None = None
 
 
+@dataclass
+class FailureCheck:
+    """One failed check/output assertion captured during `validate`.
+
+    `kind` is "output" or "check" (mirrors the two categories `cli.validate`
+    runs). `target` is the output path or the shell command. `stdout`/`stderr`
+    are the exact captured text; `exit_code` is None for output checks (they
+    don't run a subprocess).
+    """
+
+    kind: str
+    target: str
+    message: str = ""
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
+
+
+@dataclass
+class Failure:
+    """A structured record of why a spec's last `validate` run failed.
+
+    Persisted on the Spec as `last_failure` so the next `run` (after a
+    failed → ready retry) can show the executing agent exactly what broke,
+    instead of starting blind. Cleared when the spec reaches `done`.
+    """
+
+    timestamp: str
+    checks: list[FailureCheck] = field(default_factory=list)
+
+
 # ─── the flat Spec surface ────────────────────────────────────────────
 
 
@@ -112,6 +143,9 @@ class Spec:
     # `checks`/`must_pass` populated — nothing about existing files changes.
     must_not_regress: list[Check] = field(default_factory=list)
     agent: AgentRequirements = field(default_factory=AgentRequirements)
+    # Structured record of the most recent failed `validate` run (None once
+    # the spec has never failed, or after it reaches `done`).
+    last_failure: Failure | None = None
     # Section nodes the flat view has no attribute for (composes, phases,
     # open_questions, deferred, depends_on, subspec, raw). Preserved verbatim
     # across load→save so unknown/extended content is never dropped.
@@ -146,6 +180,26 @@ def _agent_to_dict(x: AgentRequirements) -> dict[str, Any]:
     return {"capabilities": list(x.capabilities), "model": x.model}
 
 
+def _failure_check_to_dict(x: FailureCheck) -> dict[str, Any]:
+    return {
+        "kind": x.kind,
+        "target": x.target,
+        "message": x.message,
+        "stdout": x.stdout,
+        "stderr": x.stderr,
+        "exit_code": x.exit_code,
+    }
+
+
+def _failure_to_dict(x: "Failure | None") -> dict[str, Any] | None:
+    if x is None:
+        return None
+    return {
+        "timestamp": x.timestamp,
+        "checks": [_failure_check_to_dict(c) for c in x.checks],
+    }
+
+
 def to_dict(spec: Spec) -> dict[str, Any]:
     """Flat JSON-able mirror of a Spec (the machine view).
 
@@ -169,6 +223,7 @@ def to_dict(spec: Spec) -> dict[str, Any]:
         "must_pass": [_check_to_dict(c) for c in spec.must_pass],
         "must_not_regress": [_check_to_dict(c) for c in spec.must_not_regress],
         "agent": _agent_to_dict(spec.agent),
+        "last_failure": _failure_to_dict(spec.last_failure),
     }
     # Fold extra section nodes in by type so the flat view stays informative.
     for node in spec.children_extra:

@@ -7,7 +7,7 @@ argument-hint: "<spec-id>"
 license: MIT
 metadata:
   author: 42euge
-  version: "0.1.0"
+  version: "0.2.0"
 observability:
   success_signal: "all output checks and validation commands passed"
   failure_signals:
@@ -19,6 +19,7 @@ observability:
     - "output files referenced by the spec"
   knowledge_writes:
     - "spec status transition (running → done, if all checks pass and user confirms)"
+    - "spec status transition (running → failed, with a structured last_failure record, if any check fails)"
 ---
 
 # Validate Spec
@@ -43,10 +44,18 @@ This runs three categories of checks, each tagged in the output:
 
 Add `--json` for a structured `{check: {category, passed, output}}` breakdown instead of (or alongside reading) the human-readable log.
 
+On failure, the full stdout/stderr/exit code of every failing check is captured
+into the spec's `last_failure` field (not just pass/fail), and a "why
+validation failed" summary is printed. That structured record carries forward
+into the next `geno-specs run` after a `failed → ready` retry — the retrying
+agent sees exactly what broke last time instead of starting blind. A clean
+pass clears any stale `last_failure` from a previous attempt.
+
 Report results, distinguishing "the change isn't done yet" (must_pass failures) from "the change broke something that worked before" (must_not_regress regressions). If all pass and the spec is in `running` status, suggest marking it done:
 ```bash
 geno-specs done <spec-id>
 ```
+(`done` also clears `last_failure` — a finished spec has no unresolved failure to carry forward.)
 
 ## Completion
 

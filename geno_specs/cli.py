@@ -8,7 +8,15 @@ import sys
 import click
 
 from geno_specs import __version__, loader, templates
-from geno_specs.models import InputFile, OutputFile, Check, AgentRequirements, VALID_STATUSES
+from geno_specs.models import (
+    InputFile,
+    OutputFile,
+    Check,
+    AgentRequirements,
+    Failure,
+    FailureCheck,
+    VALID_STATUSES,
+)
 from geno_specs.paths import Scope, ensure_structure, resolve_scope
 from geno_specs.renderer import render_json, render_prompt
 
@@ -305,28 +313,37 @@ def abandon(spec_id: str, global_: bool, project_: bool):
 # ─── validate ─────────────────────────────────────────────────────────
 
 
-def _run_check(chk):
-    """Run one Check, returning (passed: bool, detail: str)."""
+def _run_check_detailed(chk):
+    """Run one Check, returning (passed, detail, (stdout, stderr, exit_code, message)).
+
+    `detail` is the short human-readable line printed to stdout; the trailing
+    tuple carries the full captured output for `FailureCheck` records so a
+    failed `validate` leaves the next agent an exact trail (stdout/stderr/exit
+    code), not just a pass/fail line.
+    """
     import subprocess
 
     try:
         result = subprocess.run(
             chk.run, shell=True, capture_output=True, text=True, timeout=120,
         )
-    except subprocess.TimeoutExpired:
-        return False, "timeout"
+    except subprocess.TimeoutExpired as e:
+        stdout = (e.stdout or "") if isinstance(e.stdout, str) else ""
+        stderr = (e.stderr or "") if isinstance(e.stderr, str) else ""
+        return False, "timeout", (stdout, stderr, None, "timed out after 120s")
 
     expect_code = 0
     if chk.expect.startswith("exit "):
         expect_code = int(chk.expect.split()[1])
     if result.returncode == expect_code:
-        return True, f"exit {result.returncode}"
+        return True, f"exit {result.returncode}", (result.stdout, result.stderr, result.returncode, "")
     detail = f"exit {result.returncode} (expected {expect_code})"
     if result.stderr.strip():
         detail += "\n" + "\n".join(
             f"    {line}" for line in result.stderr.strip().splitlines()[:5]
         )
-    return False, detail
+    message = f"exit {result.returncode} (expected {expect_code})"
+    return False, detail, (result.stdout, result.stderr, result.returncode, message)
 
 
 @main.command()
@@ -342,7 +359,13 @@ def validate(spec_id: str, as_json: bool, global_: bool, project_: bool):
     (SWE-bench's FAIL_TO_PASS / PASS_TO_PASS split). Output is a structured
     breakdown per category so failures are unambiguous about which contract
     they broke.
+
+    On failure, the full stdout/stderr/exit code of every failing check is
+    captured into ``spec.last_failure`` (not just pass/fail) so the next
+    ``run`` after a failed → ready retry sees exactly what broke. A clean
+    pass clears any stale ``last_failure`` from a previous attempt.
     """
+    from datetime import datetime, timezone
     from pathlib import Path
 
     scope = _pick_scope(global_, project_)
@@ -356,6 +379,7 @@ def validate(spec_id: str, as_json: bool, global_: bool, project_: bool):
     results: dict[str, dict] = {}
     passed = 0
     failed = 0
+    failure_checks: list[FailureCheck] = []
 
     for out in spec.outputs:
         label = f"output:{out.path}"
@@ -366,6 +390,9 @@ def validate(spec_id: str, as_json: bool, global_: bool, project_: bool):
             }
             click.echo(f"  FAIL  [output]  output missing: {out.path}")
             failed += 1
+            failure_checks.append(FailureCheck(
+                kind="output", target=out.path, message="output file missing",
+            ))
             continue
         if out.check:
             content = p.read_text(encoding="utf-8", errors="replace")
@@ -385,6 +412,11 @@ def validate(spec_id: str, as_json: bool, global_: bool, project_: bool):
                     }
                     click.echo(f"  FAIL  [output]  {out.path}: missing {needle!r}")
                     failed += 1
+                    failure_checks.append(FailureCheck(
+                        kind="output", target=out.path,
+                        message=f"expected to contain {needle!r} but did not",
+                        stdout=content[:2000],
+                    ))
             else:
                 click.echo(f"  SKIP  [output]  {out.path}: unknown check syntax {out.check!r}")
         else:
@@ -392,27 +424,27 @@ def validate(spec_id: str, as_json: bool, global_: bool, project_: bool):
             click.echo(f"  PASS  [output]  {out.path}: exists")
             passed += 1
 
-    for chk in spec.must_pass:
-        label = f"must_pass:{chk.run}"
-        ok, detail = _run_check(chk)
-        results[label] = {"category": "must_pass", "passed": ok, "output": detail}
-        if ok:
-            click.echo(f"  PASS  [must_pass]  `{chk.run}` → {detail}")
-            passed += 1
-        else:
-            click.echo(f"  FAIL  [must_pass]  `{chk.run}` → {detail}")
-            failed += 1
+    def _run_category(checks, category: str, *, regression: bool = False) -> None:
+        nonlocal passed, failed
+        for chk in checks:
+            label = f"{category}:{chk.run}"
+            ok, detail, run_result = _run_check_detailed(chk)
+            results[label] = {"category": category, "passed": ok, "output": detail}
+            if ok:
+                click.echo(f"  PASS  [{category}]  `{chk.run}` → {detail}")
+                passed += 1
+            else:
+                prefix = "REGRESSION: " if regression else ""
+                click.echo(f"  FAIL  [{category}]  `{chk.run}` → {prefix}{detail}")
+                failed += 1
+                stdout, stderr, exit_code, message = run_result
+                failure_checks.append(FailureCheck(
+                    kind="check", target=chk.run, message=message,
+                    stdout=stdout, stderr=stderr, exit_code=exit_code,
+                ))
 
-    for chk in spec.must_not_regress:
-        label = f"must_not_regress:{chk.run}"
-        ok, detail = _run_check(chk)
-        results[label] = {"category": "must_not_regress", "passed": ok, "output": detail}
-        if ok:
-            click.echo(f"  PASS  [must_not_regress]  `{chk.run}` → {detail}")
-            passed += 1
-        else:
-            click.echo(f"  FAIL  [must_not_regress]  `{chk.run}` → REGRESSION: {detail}")
-            failed += 1
+    _run_category(spec.must_pass, "must_pass")
+    _run_category(spec.must_not_regress, "must_not_regress", regression=True)
 
     if as_json:
         click.echo(json.dumps(results, indent=2))
@@ -426,6 +458,22 @@ def validate(spec_id: str, as_json: bool, global_: bool, project_: bool):
         )
         click.echo(f"\n{passed} passed, {failed} failed"
                    f" ({must_pass_failed} must_pass failures, {regressions} regressions)")
+
+    if failed:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        spec.last_failure = Failure(timestamp=now, checks=failure_checks)
+        loader.save(scope, spec)
+
+        click.echo("\nwhy validation failed:")
+        for c in failure_checks:
+            detail = f"  - [{c.kind}] {c.target}: {c.message}"
+            if c.exit_code is not None:
+                detail += f" (exit {c.exit_code})"
+            click.echo(detail)
+    elif spec.last_failure is not None:
+        # Clean pass — drop the stale record from a previous attempt.
+        spec.last_failure = None
+        loader.save(scope, spec)
 
     sys.exit(1 if failed else 0)
 

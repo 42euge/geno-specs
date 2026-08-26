@@ -19,6 +19,7 @@ from geno_specs.locks import file_lock
 from geno_specs.models import (
     AgentRequirements,
     Check,
+    Failure,
     InputFile,
     OutputFile,
     Spec,
@@ -82,6 +83,9 @@ def spec_to_node(spec: Spec) -> Node:
         "context": spec.context,
         "template": spec.template,
     })
+    # Surface the last failure first so a retrying agent sees it immediately.
+    if spec.last_failure is not None:
+        node.children.append(Node("last_failure", data={"value": spec.last_failure}))
     # Flat sections → section nodes (only when non-empty, to keep files clean).
     if spec.inputs:
         node.children.append(Node("inputs", data={"items": list(spec.inputs)}))
@@ -120,7 +124,9 @@ def node_to_spec(node: Node) -> Spec:
         template=node.data.get("template"),
     )
     for child in node.children:
-        if child.type == "inputs":
+        if child.type == "last_failure":
+            spec.last_failure = child.data.get("value")
+        elif child.type == "inputs":
             spec.inputs = list(child.data.get("items", []))
         elif child.type == "outputs":
             spec.outputs = list(child.data.get("items", []))
@@ -285,5 +291,21 @@ def transition(scope: Scope, spec_id: str, new_status: str) -> Spec:
                 f"not done: {names}"
             )
     spec.status = new_status
+    # `done` means the retry loop is over — drop the stale failure record so
+    # a future failure on the *next* run doesn't get confused with this one.
+    if new_status == "done":
+        spec.last_failure = None
+    save(scope, spec)
+    return spec
+
+
+def set_failure(scope: Scope, spec_id: str, failure: Failure) -> Spec:
+    """Transition a spec to `failed` and persist its structured failure record.
+
+    Used by `cli.validate` in place of a bare `transition(..., "failed")` so
+    the *why* survives into the next `run` after a failed → ready retry.
+    """
+    spec = transition(scope, spec_id, "failed")
+    spec.last_failure = failure
     save(scope, spec)
     return spec
