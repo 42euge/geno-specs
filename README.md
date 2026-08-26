@@ -78,6 +78,24 @@ unmodified — they're loaded as `must_pass` with an empty
 breakdown keyed by check, each with `category` (`output` / `must_pass` /
 `must_not_regress`), `passed`, and `output`.
 
+## Project scaffolding
+
+```bash
+# Scaffold .specs/ with placeholder VISION.md, TENETS.md, GOALS.md, features/
+geno-specs init
+
+# Same, but draft real starter content from README.md + recent git log
+# instead of bare placeholders (existing files are never overwritten)
+geno-specs init --fill
+```
+
+`--fill` is a heuristic draft, not an LLM call: it pulls your README's opening
+description into VISION's "Why this exists", summarizes the last ~15 commit
+subjects into GOALS "Active", and seeds TENETS with two generic starter
+principles. Every filled file is marked `> DRAFT` at the top — read and edit
+before trusting it.
+
+
 ## Templates
 
 | Template | Description |
