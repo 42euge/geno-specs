@@ -7,7 +7,7 @@ import sys
 
 import click
 
-from geno_specs import __version__, loader, templates
+from geno_specs import __version__, loader, templates, validator
 from geno_specs.models import InputFile, OutputFile, Check, AgentRequirements, VALID_STATUSES
 from geno_specs.paths import Scope, ensure_structure, resolve_scope
 from geno_specs.renderer import render_json, render_prompt
@@ -266,9 +266,6 @@ def abandon(spec_id: str, global_: bool, project_: bool):
 @_scope_options
 def validate(spec_id: str, global_: bool, project_: bool):
     """Check a spec's completion criteria (output checks + validation commands)."""
-    import subprocess
-    from pathlib import Path
-
     scope = _pick_scope(global_, project_)
     try:
         spec = loader.load(scope, spec_id)
@@ -276,51 +273,9 @@ def validate(spec_id: str, global_: bool, project_: bool):
         click.echo(f"error: spec {spec_id!r} not found", err=True)
         sys.exit(1)
 
-    passed = 0
-    failed = 0
-
-    for out in spec.outputs:
-        p = Path(out.path)
-        if not p.exists():
-            click.echo(f"  FAIL  output missing: {out.path}")
-            failed += 1
-            continue
-        if out.check:
-            content = p.read_text(encoding="utf-8", errors="replace")
-            if out.check.startswith("contains "):
-                needle = out.check[9:].strip().strip('"').strip("'")
-                if needle in content:
-                    click.echo(f"  PASS  {out.path}: contains {needle!r}")
-                    passed += 1
-                else:
-                    click.echo(f"  FAIL  {out.path}: missing {needle!r}")
-                    failed += 1
-            else:
-                click.echo(f"  SKIP  {out.path}: unknown check syntax {out.check!r}")
-        else:
-            click.echo(f"  PASS  {out.path}: exists")
-            passed += 1
-
-    for chk in spec.checks:
-        try:
-            result = subprocess.run(
-                chk.run, shell=True, capture_output=True, text=True, timeout=120,
-            )
-            expect_code = 0
-            if chk.expect.startswith("exit "):
-                expect_code = int(chk.expect.split()[1])
-            if result.returncode == expect_code:
-                click.echo(f"  PASS  `{chk.run}` → exit {result.returncode}")
-                passed += 1
-            else:
-                click.echo(f"  FAIL  `{chk.run}` → exit {result.returncode} (expected {expect_code})")
-                if result.stderr.strip():
-                    for line in result.stderr.strip().splitlines()[:5]:
-                        click.echo(f"         {line}")
-                failed += 1
-        except subprocess.TimeoutExpired:
-            click.echo(f"  FAIL  `{chk.run}` → timeout")
-            failed += 1
+    passed, failed, lines = validator.run_checks(spec)
+    for line in lines:
+        click.echo(line)
 
     click.echo(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
