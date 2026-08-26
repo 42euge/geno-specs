@@ -342,8 +342,13 @@ def list_templates():
 @main.command()
 @click.option("--name", default="", help="Project name (defaults to directory name).")
 @click.option("--description", default="", help="One-line project description.")
+@click.option(
+    "--fill", is_flag=True,
+    help="Draft real content into VISION/TENETS/GOALS from README.md and git log "
+         "instead of leaving bare placeholders.",
+)
 @_scope_options
-def init(name: str, description: str, global_: bool, project_: bool):
+def init(name: str, description: str, fill: bool, global_: bool, project_: bool):
     """Initialize .specs/ with VISION.md, TENETS.md, GOALS.md, features/."""
     from pathlib import Path
     from geno_specs import scaffold
@@ -352,9 +357,12 @@ def init(name: str, description: str, global_: bool, project_: bool):
     if not name:
         name = repo_root.name
 
-    root = scaffold.scaffold(repo_root, name=name, description=description)
+    root = scaffold.scaffold(repo_root, name=name, description=description, fill=fill)
     click.echo(f"Initialized {root}")
-    click.echo(f"  VISION.md  TENETS.md  GOALS.md  features/")
+    if fill:
+        click.echo(f"  VISION.md  TENETS.md  GOALS.md  features/  (drafted from README + git log — review before trusting)")
+    else:
+        click.echo(f"  VISION.md  TENETS.md  GOALS.md  features/")
 
     if project_:
         target_dir = repo_root / "geno" / "geno-specs"
