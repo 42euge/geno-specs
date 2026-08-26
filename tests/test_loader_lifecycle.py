@@ -74,3 +74,58 @@ def test_load_missing_raises(tmp_path):
     scope = _scope(tmp_path)
     with pytest.raises(FileNotFoundError):
         loader.load(scope, "nope")
+
+
+
+def test_create_with_depends_on(tmp_path):
+    scope = _scope(tmp_path)
+    a = loader.create(scope, "task a")
+    b = loader.create(scope, "task b", depends_on=[a.id])
+    reloaded = loader.load(scope, b.id)
+    assert reloaded.depends_on == [a.id]
+
+
+def test_ready_blocked_on_unmet_dependency(tmp_path):
+    scope = _scope(tmp_path)
+    a = loader.create(scope, "task a")  # still draft
+    b = loader.create(scope, "task b", depends_on=[a.id])
+    with pytest.raises(ValueError, match=a.id):
+        loader.transition(scope, b.id, "ready")
+    # a is unaffected, still draft
+    assert loader.load(scope, a.id).status == "draft"
+
+
+def test_ready_allowed_once_dependency_done(tmp_path):
+    scope = _scope(tmp_path)
+    a = loader.create(scope, "task a")
+    b = loader.create(scope, "task b", depends_on=[a.id])
+    loader.transition(scope, a.id, "ready")
+    loader.transition(scope, a.id, "running")
+    loader.transition(scope, a.id, "done")
+    loader.transition(scope, b.id, "ready")
+    assert loader.load(scope, b.id).status == "ready"
+
+
+def test_unmet_dependencies_reports_missing_spec(tmp_path):
+    scope = _scope(tmp_path)
+    b = loader.create(scope, "task b", depends_on=["nonexistent-spec"])
+    unmet = loader.unmet_dependencies(scope, b)
+    assert unmet == ["nonexistent-spec"]
+
+
+def test_find_cycle_detects_direct_cycle(tmp_path):
+    scope = _scope(tmp_path)
+    a = loader.create(scope, "task a")
+    b = loader.create(scope, "task b", depends_on=[a.id])
+    # a -> b would close the loop b -> a -> b
+    cycle = loader.find_cycle(scope, a.id, [b.id])
+    assert cycle is not None
+    assert cycle[0] == a.id and cycle[-1] == a.id
+
+
+def test_find_cycle_none_for_acyclic_graph(tmp_path):
+    scope = _scope(tmp_path)
+    a = loader.create(scope, "task a")
+    b = loader.create(scope, "task b")
+    c = loader.create(scope, "task c", depends_on=[a.id, b.id])
+    assert loader.find_cycle(scope, c.id, [a.id, b.id]) is None

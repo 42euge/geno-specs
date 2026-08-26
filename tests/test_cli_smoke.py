@@ -67,3 +67,58 @@ def test_edit_appends(project):
     assert r.exit_code == 0, r.output
     j = run(main, ["show", spec_id, "--json"]).output
     assert "a.py" in j and "out.txt" in j and "pytest" in j and "python" in j
+
+
+
+def test_create_with_depends_on_and_ready_blocked(project):
+    run = CliRunner().invoke
+    a_id = run(main, ["create", "task", "a"]).output.split()[0]
+    b_id = run(main, ["create", "task", "b", "--depends-on", a_id]).output.split()[0]
+
+    r = run(main, ["ready", b_id])
+    assert r.exit_code != 0
+    assert a_id in r.output
+
+    # unblock: finish a, then b can go ready
+    run(main, ["ready", a_id])
+    run(main, ["run", a_id])
+    run(main, ["done", a_id])
+    r = run(main, ["ready", b_id])
+    assert r.exit_code == 0, r.output
+
+
+def test_edit_depends_on_rejects_cycle(project):
+    run = CliRunner().invoke
+    a_id = run(main, ["create", "task", "a"]).output.split()[0]
+    b_id = run(main, ["create", "task", "b", "--depends-on", a_id]).output.split()[0]
+
+    r = run(main, ["edit", a_id, "--depends-on", b_id])
+    assert r.exit_code != 0
+    assert "cycle" in r.output.lower()
+
+
+def test_edit_depends_on_rejects_self(project):
+    run = CliRunner().invoke
+    a_id = run(main, ["create", "task", "a"]).output.split()[0]
+    r = run(main, ["edit", a_id, "--depends-on", a_id])
+    assert r.exit_code != 0
+
+
+def test_list_unblocked_filter(project):
+    run = CliRunner().invoke
+    a_id = run(main, ["create", "task", "a"]).output.split()[0]
+    b_id = run(main, ["create", "task", "b", "--depends-on", a_id]).output.split()[0]
+
+    run(main, ["ready", a_id])  # a: ready, no deps -> unblocked
+    # b still draft, can't even be readied yet
+
+    r = run(main, ["list", "--unblocked"])
+    assert a_id in r.output
+    assert b_id not in r.output
+
+    # finish a, ready b -> now b should also show unblocked
+    run(main, ["run", a_id])
+    run(main, ["done", a_id])
+    run(main, ["ready", b_id])
+    r = run(main, ["list", "--unblocked"])
+    assert b_id in r.output

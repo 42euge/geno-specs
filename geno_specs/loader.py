@@ -39,7 +39,7 @@ _TRANSITIONS: dict[str, set[str]] = {
 }
 
 # Flat-attr section types Spec carries directly; everything else → children_extra.
-_FLAT_SECTIONS = {"inputs", "outputs", "steps", "acceptance", "checks", "agent"}
+_FLAT_SECTIONS = {"inputs", "outputs", "steps", "acceptance", "checks", "depends_on", "agent"}
 
 
 # ─── ids + paths ──────────────────────────────────────────────────────
@@ -90,6 +90,8 @@ def spec_to_node(spec: Spec) -> Node:
         node.children.append(Node("acceptance", data={"items": list(spec.acceptance)}))
     if spec.checks:
         node.children.append(Node("checks", data={"items": list(spec.checks)}))
+    if spec.depends_on:
+        node.children.append(Node("depends_on", data={"items": list(spec.depends_on)}))
     if spec.agent.capabilities or spec.agent.model:
         node.children.append(Node("agent", data={"value": spec.agent}))
     # Extra sections preserved verbatim.
@@ -121,6 +123,8 @@ def node_to_spec(node: Node) -> Spec:
             spec.acceptance = list(child.data.get("items", []))
         elif child.type == "checks":
             spec.checks = list(child.data.get("items", []))
+        elif child.type == "depends_on":
+            spec.depends_on = list(child.data.get("items", []))
         elif child.type == "agent":
             spec.agent = child.data.get("value", AgentRequirements())
         else:
@@ -179,6 +183,7 @@ def create(
     context: str = "",
     steps: list[str] | None = None,
     acceptance: list[str] | None = None,
+    depends_on: list[str] | None = None,
 ) -> Spec:
     spec = Spec(
         id=make_id(title),
@@ -189,9 +194,67 @@ def create(
         context=context,
         steps=list(steps or []),
         acceptance=list(acceptance or []),
+        depends_on=list(depends_on or []),
     )
     save(scope, spec)
     return spec
+
+
+# ─── dependency graph ──────────────────────────────────────────────────
+
+
+def unmet_dependencies(scope: Scope, spec: Spec) -> list[str]:
+    """Ids in spec.depends_on that are not (yet) status == 'done'.
+
+    Ids that don't resolve to an on-disk spec are also reported as unmet
+    (a dependency you can't find is not satisfied).
+    """
+    unmet: list[str] = []
+    for dep_id in spec.depends_on:
+        try:
+            dep = load(scope, dep_id)
+        except FileNotFoundError:
+            unmet.append(dep_id)
+            continue
+        if dep.status != "done":
+            unmet.append(dep_id)
+    return unmet
+
+
+def find_cycle(scope: Scope, spec_id: str, depends_on: list[str]) -> list[str] | None:
+    """Detect whether adding depends_on to spec_id would create a cycle.
+
+    Walks the depends_on graph as currently on disk, treating spec_id's
+    dependency set as the proposed new depends_on list (not necessarily
+    saved yet). Returns the cycle path (list of spec ids, spec_id first and
+    last) if one exists, else None.
+    """
+    all_specs = {s.id: s for s in load_all(scope)}
+
+    def edges(sid: str) -> list[str]:
+        if sid == spec_id:
+            return list(depends_on)
+        s = all_specs.get(sid)
+        return list(s.depends_on) if s else []
+
+    path: list[str] = [spec_id]
+    seen_in_path: set[str] = {spec_id}
+
+    def dfs(node: str) -> list[str] | None:
+        for nxt in edges(node):
+            if nxt == spec_id:
+                return path + [nxt]
+            if nxt in seen_in_path:
+                continue
+            seen_in_path.add(nxt)
+            path.append(nxt)
+            result = dfs(nxt)
+            if result is not None:
+                return result
+            path.pop()
+        return None
+
+    return dfs(spec_id)
 
 
 def transition(scope: Scope, spec_id: str, new_status: str) -> Spec:
@@ -201,9 +264,17 @@ def transition(scope: Scope, spec_id: str, new_status: str) -> Spec:
     allowed = _TRANSITIONS.get(spec.status, set())
     if new_status != spec.status and new_status not in allowed:
         raise ValueError(
-            f"cannot transition {spec.status!r} → {new_status!r} "
+            f"cannot transition {spec.status!r} \u2192 {new_status!r} "
             f"(allowed: {sorted(allowed) or 'none'})"
         )
+    if new_status == "ready":
+        unmet = unmet_dependencies(scope, spec)
+        if unmet:
+            names = ", ".join(unmet)
+            raise ValueError(
+                f"cannot mark {spec_id!r} ready: unmet dependency/dependencies "
+                f"not done: {names}"
+            )
     spec.status = new_status
     save(scope, spec)
     return spec

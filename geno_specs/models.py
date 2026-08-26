@@ -7,8 +7,10 @@ The canonical internal form of a spec is the `Node` tree (`nodes.py`). `Spec`
 is a flat, mutable view the CLI reads and mutates in place (e.g.
 `spec.inputs.append(...)`); `loader.spec_to_node` / `node_to_spec` bridge the
 two. Section types that have no flat attribute (composes, phases,
-open_questions, deferred, depends_on, subspec) ride along in `children_extra`
-as raw `Node`s so they survive a load→save round-trip untouched.
+open_questions, deferred, subspec) ride along in `children_extra`
+as raw `Node`s so they survive a load→save round-trip untouched. `depends_on`
+(list of other spec ids this spec is gated on) is a flat attribute, same
+pattern as `tags`.
 
 This module must NOT import `nodes` (avoids an import cycle — `nodes` may
 reference the leaf types here, not vice versa).
@@ -100,6 +102,7 @@ class Spec:
     inputs: list[InputFile] = field(default_factory=list)
     outputs: list[OutputFile] = field(default_factory=list)
     checks: list[Check] = field(default_factory=list)
+    depends_on: list[str] = field(default_factory=list)
     agent: AgentRequirements = field(default_factory=AgentRequirements)
     # Section nodes the flat view has no attribute for (composes, phases,
     # open_questions, deferred, depends_on, subspec, raw). Preserved verbatim
@@ -145,6 +148,7 @@ def to_dict(spec: Spec) -> dict[str, Any]:
         "inputs": [_input_to_dict(i) for i in spec.inputs],
         "outputs": [_output_to_dict(o) for o in spec.outputs],
         "checks": [_check_to_dict(c) for c in spec.checks],
+        "depends_on": list(spec.depends_on),
         "agent": _agent_to_dict(spec.agent),
     }
     # Fold extra section nodes in by type so the flat view stays informative.

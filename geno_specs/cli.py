@@ -49,12 +49,14 @@ def main():
 @click.option("--tag", "-t", "tags", multiple=True, help="Tag (repeatable).")
 @click.option("--template", "tpl_name", default=None, help="Use a built-in template.")
 @click.option("--context", default="", help="Context/description text.")
+@click.option("--depends-on", "depends_on", multiple=True, help="Spec id this spec is blocked on (repeatable).")
 @_scope_options
 def create(
     title: tuple,
     tags: tuple,
     tpl_name: str | None,
     context: str,
+    depends_on: tuple,
     global_: bool,
     project_: bool,
 ):
@@ -86,6 +88,7 @@ def create(
         context=context,
         steps=steps,
         acceptance=acceptance,
+        depends_on=list(depends_on),
     )
     click.echo(f"{spec.id}  (draft)")
     click.echo(f"  {loader.spec_path(scope, spec.id)}")
@@ -97,9 +100,10 @@ def create(
 @main.command("list")
 @click.option("--status", "-s", default=None, help="Filter by status.")
 @click.option("--tag", default=None, help="Filter by tag.")
+@click.option("--unblocked", is_flag=True, help="Only specs that are status=ready AND all dependencies are done.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 @_scope_options
-def list_cmd(status: str | None, tag: str | None, as_json: bool, global_: bool, project_: bool):
+def list_cmd(status: str | None, tag: str | None, unblocked: bool, as_json: bool, global_: bool, project_: bool):
     """List specs."""
     scope = _pick_scope(global_, project_)
     specs = loader.load_all(scope)
@@ -108,6 +112,11 @@ def list_cmd(status: str | None, tag: str | None, as_json: bool, global_: bool, 
         specs = [s for s in specs if s.status == status]
     if tag:
         specs = [s for s in specs if tag in s.tags]
+    if unblocked:
+        specs = [
+            s for s in specs
+            if s.status == "ready" and not loader.unmet_dependencies(scope, s)
+        ]
 
     if as_json:
         rows = [render_json(s) for s in specs]
@@ -161,6 +170,7 @@ def show(spec_id: str, as_json: bool, as_prompt: bool, global_: bool, project_: 
 @click.option("--context", default=None, help="Set context text.")
 @click.option("--agent-cap", multiple=True, help="Add agent capability.")
 @click.option("--agent-model", default=None, help="Set preferred model.")
+@click.option("--depends-on", "depends_on", multiple=True, help="Add a spec id this spec is blocked on (repeatable).")
 @_scope_options
 def edit(
     spec_id: str,
@@ -171,6 +181,7 @@ def edit(
     context: str | None,
     agent_cap: tuple,
     agent_model: str | None,
+    depends_on: tuple,
     global_: bool,
     project_: bool,
 ):
@@ -201,6 +212,25 @@ def edit(
     if agent_model is not None:
         spec.agent.model = agent_model
 
+    if depends_on:
+        proposed = list(spec.depends_on)
+        for dep_id in depends_on:
+            dep_id = dep_id.strip()
+            if dep_id and dep_id not in proposed:
+                proposed.append(dep_id)
+        if spec.id in proposed:
+            click.echo(f"error: spec {spec.id!r} cannot depend on itself", err=True)
+            sys.exit(1)
+        cycle = loader.find_cycle(scope, spec.id, proposed)
+        if cycle is not None:
+            click.echo(
+                f"error: adding this dependency would create a cycle: "
+                f"{' -> '.join(cycle)}",
+                err=True,
+            )
+            sys.exit(1)
+        spec.depends_on = proposed
+
     loader.save(scope, spec)
     click.echo(f"{spec.id}  updated")
 
@@ -214,7 +244,11 @@ def edit(
 def ready(spec_id: str, global_: bool, project_: bool):
     """Mark a spec as ready for execution."""
     scope = _pick_scope(global_, project_)
-    spec = loader.transition(scope, spec_id, "ready")
+    try:
+        spec = loader.transition(scope, spec_id, "ready")
+    except ValueError as e:
+        click.echo(f"error: {e}", err=True)
+        sys.exit(1)
     click.echo(f"{spec.id}  ready")
 
 

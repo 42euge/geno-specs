@@ -52,3 +52,27 @@ draft → ready → running → done
                        → failed → ready (retry)
 Any state → abandoned
 ```
+
+## Dependencies (`depends_on`)
+
+A spec can declare other specs it's blocked on:
+
+```yaml
+name: task b
+depends_on:
+  - 20260826-task-a
+```
+
+- `depends_on` is a flat `list[str]` of other spec ids, same shape/behavior as `tags`.
+- Set at creation time: `geno-specs create "task b" --depends-on 20260826-task-a`
+- Add to an existing spec: `geno-specs edit <id> --depends-on <other-id>` (repeatable).
+- **Ready is gated**: `geno-specs ready <id>` refuses to transition if any id in
+  `depends_on` does not resolve to a spec with status `done` — the error names
+  the unmet dependency/dependencies.
+- **Cycles are rejected at edit time**: `geno-specs edit <id> --depends-on <other-id>`
+  refuses (and self-dependency is also rejected) if adding the edge would create
+  a cycle in the dependency graph.
+- **Finding unblocked work**: `geno-specs list --unblocked` shows only specs that
+  are `status=ready` AND have every dependency already `done` — the set a dev
+  loop should actually pick up next, as opposed to the full (undifferentiated)
+  `ready` pool.
