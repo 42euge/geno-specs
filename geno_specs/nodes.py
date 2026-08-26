@@ -255,6 +255,17 @@ register("checks", _list_section(
     dump_item=lambda x: {"run": x.run, "expect": x.expect},
 ))
 
+# must_not_regress — checks that were passing before the change and must
+# still pass after (the regression half of the SWE-bench-style pass-list
+# split; `checks` above is the must_pass half, kept for backward compat).
+register("must_not_regress", _list_section(
+    "must_not_regress",
+    lambda x: f"- `{x.run}` → {x.expect}",
+    "Must not regress",
+    parse_item=_mk_check,
+    dump_item=lambda x: {"run": x.run, "expect": x.expect},
+))
+
 # depends_on — spec ids this spec is gated on
 register("depends_on", _list_section(
     "depends_on", lambda s: f"- {s}", "Blocked on specs (must be done)"))
@@ -331,7 +342,7 @@ register("open_questions", _open_questions_handler())
 _SPEC_SCALAR_KEYS = ("status", "tags", "context", "template")
 # Order sections are emitted in (diff-friendly, human-readable).
 _SECTION_ORDER = (
-    "inputs", "outputs", "steps", "acceptance", "checks",
+    "inputs", "outputs", "steps", "acceptance", "checks", "must_not_regress",
     "composes", "phases", "open_questions", "depends_on", "deferred",
     "agent", "subspecs",
 )

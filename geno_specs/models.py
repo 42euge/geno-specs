@@ -100,11 +100,28 @@ class Spec:
     inputs: list[InputFile] = field(default_factory=list)
     outputs: list[OutputFile] = field(default_factory=list)
     checks: list[Check] = field(default_factory=list)
+    # `checks` is the original flat, undifferentiated pass-list — kept for
+    # backward compatibility and now treated as the must_pass category (see
+    # SWE-bench FAIL_TO_PASS/PASS_TO_PASS). `must_not_regress` is the new,
+    # explicit category: checks that were passing before the change and must
+    # still pass after it (a regression contract). Old spec files that only
+    # have `checks:` on disk load with `must_not_regress` empty and
+    # `checks`/`must_pass` populated — nothing about existing files changes.
+    must_not_regress: list[Check] = field(default_factory=list)
     agent: AgentRequirements = field(default_factory=AgentRequirements)
     # Section nodes the flat view has no attribute for (composes, phases,
     # open_questions, deferred, depends_on, subspec, raw). Preserved verbatim
     # across load→save so unknown/extended content is never dropped.
     children_extra: list["Node"] = field(default_factory=list)
+
+    @property
+    def must_pass(self) -> list[Check]:
+        """Explicit alias for `checks` — the must-newly-pass category."""
+        return self.checks
+
+    @must_pass.setter
+    def must_pass(self, value: list[Check]) -> None:
+        self.checks = value
 
 
 # ─── serialization helpers ────────────────────────────────────────────
@@ -145,6 +162,8 @@ def to_dict(spec: Spec) -> dict[str, Any]:
         "inputs": [_input_to_dict(i) for i in spec.inputs],
         "outputs": [_output_to_dict(o) for o in spec.outputs],
         "checks": [_check_to_dict(c) for c in spec.checks],
+        "must_pass": [_check_to_dict(c) for c in spec.must_pass],
+        "must_not_regress": [_check_to_dict(c) for c in spec.must_not_regress],
         "agent": _agent_to_dict(spec.agent),
     }
     # Fold extra section nodes in by type so the flat view stays informative.
