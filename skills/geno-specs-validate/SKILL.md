@@ -35,12 +35,15 @@ Check whether a spec's completion criteria are met.
 geno-specs validate <spec-id>
 ```
 
-This runs two categories of checks:
+This runs three categories of checks, each tagged in the output:
 
-1. **Output checks** — verify expected output files exist and satisfy their content checks (e.g., `contains "class Foo"`)
-2. **Validation commands** — run shell commands and check exit codes (e.g., `pytest` → exit 0)
+1. **Output checks** (`[output]`) — verify expected output files exist and satisfy their content checks (e.g., `contains "class Foo"`)
+2. **must_pass checks** (`[must_pass]`) — the change's own validation commands, which must newly succeed (e.g., `pytest tests/test_new.py` → exit 0). This is the same list as the legacy flat `checks:` field.
+3. **must_not_regress checks** (`[must_not_regress]`) — commands that were passing before the change and must still pass after it. A failure here is flagged as a `REGRESSION`, distinct from an unfinished must_pass check.
 
-Report results. If all pass and the spec is in `running` status, suggest marking it done:
+Add `--json` for a structured `{check: {category, passed, output}}` breakdown instead of (or alongside reading) the human-readable log.
+
+Report results, distinguishing "the change isn't done yet" (must_pass failures) from "the change broke something that worked before" (must_not_regress regressions). If all pass and the spec is in `running` status, suggest marking it done:
 ```bash
 geno-specs done <spec-id>
 ```

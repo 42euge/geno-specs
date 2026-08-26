@@ -166,6 +166,10 @@ def show(spec_id: str, as_json: bool, as_prompt: bool, global_: bool, project_: 
 @click.option("--add-input", multiple=True, help="Add input: path[:role]")
 @click.option("--add-output", multiple=True, help="Add output: path[:check]")
 @click.option("--add-check", multiple=True, help="Add check: command[:expect]")
+@click.option(
+    "--add-must-not-regress", multiple=True,
+    help="Add a must-not-regress check: command[:expect]",
+)
 @click.option("--add-step", multiple=True, help="Append a step.")
 @click.option("--context", default=None, help="Set context text.")
 @click.option("--agent-cap", multiple=True, help="Add agent capability.")
@@ -177,6 +181,7 @@ def edit(
     add_input: tuple,
     add_output: tuple,
     add_check: tuple,
+    add_must_not_regress: tuple,
     add_step: tuple,
     context: str | None,
     agent_cap: tuple,
@@ -202,6 +207,11 @@ def edit(
     for raw in add_check:
         cmd, _, expect = raw.partition(":")
         spec.checks.append(Check(run=cmd.strip(), expect=expect.strip() or "exit 0"))
+    for raw in add_must_not_regress:
+        cmd, _, expect = raw.partition(":")
+        spec.must_not_regress.append(
+            Check(run=cmd.strip(), expect=expect.strip() or "exit 0")
+        )
     for step in add_step:
         spec.steps.append(step.strip())
     if context is not None:
@@ -295,12 +305,44 @@ def abandon(spec_id: str, global_: bool, project_: bool):
 # ─── validate ─────────────────────────────────────────────────────────
 
 
+def _run_check(chk):
+    """Run one Check, returning (passed: bool, detail: str)."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            chk.run, shell=True, capture_output=True, text=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
+
+    expect_code = 0
+    if chk.expect.startswith("exit "):
+        expect_code = int(chk.expect.split()[1])
+    if result.returncode == expect_code:
+        return True, f"exit {result.returncode}"
+    detail = f"exit {result.returncode} (expected {expect_code})"
+    if result.stderr.strip():
+        detail += "\n" + "\n".join(
+            f"    {line}" for line in result.stderr.strip().splitlines()[:5]
+        )
+    return False, detail
+
+
 @main.command()
 @click.argument("spec_id")
+@click.option("--json", "as_json", is_flag=True, help="Emit a structured JSON breakdown.")
 @_scope_options
-def validate(spec_id: str, global_: bool, project_: bool):
-    """Check a spec's completion criteria (output checks + validation commands)."""
-    import subprocess
+def validate(spec_id: str, as_json: bool, global_: bool, project_: bool):
+    """Check a spec's completion criteria: outputs, must_pass, and must_not_regress.
+
+    `must_pass` (aka the legacy flat `checks` field) are checks that must
+    newly succeed. `must_not_regress` are checks that were passing before
+    this change and must still pass after it — a regression contract
+    (SWE-bench's FAIL_TO_PASS / PASS_TO_PASS split). Output is a structured
+    breakdown per category so failures are unambiguous about which contract
+    they broke.
+    """
     from pathlib import Path
 
     scope = _pick_scope(global_, project_)
@@ -310,13 +352,19 @@ def validate(spec_id: str, global_: bool, project_: bool):
         click.echo(f"error: spec {spec_id!r} not found", err=True)
         sys.exit(1)
 
+    # results: check/output label -> {category, passed, output}
+    results: dict[str, dict] = {}
     passed = 0
     failed = 0
 
     for out in spec.outputs:
+        label = f"output:{out.path}"
         p = Path(out.path)
         if not p.exists():
-            click.echo(f"  FAIL  output missing: {out.path}")
+            results[label] = {
+                "category": "output", "passed": False, "output": "missing",
+            }
+            click.echo(f"  FAIL  [output]  output missing: {out.path}")
             failed += 1
             continue
         if out.check:
@@ -324,39 +372,61 @@ def validate(spec_id: str, global_: bool, project_: bool):
             if out.check.startswith("contains "):
                 needle = out.check[9:].strip().strip('"').strip("'")
                 if needle in content:
-                    click.echo(f"  PASS  {out.path}: contains {needle!r}")
+                    results[label] = {
+                        "category": "output", "passed": True,
+                        "output": f"contains {needle!r}",
+                    }
+                    click.echo(f"  PASS  [output]  {out.path}: contains {needle!r}")
                     passed += 1
                 else:
-                    click.echo(f"  FAIL  {out.path}: missing {needle!r}")
+                    results[label] = {
+                        "category": "output", "passed": False,
+                        "output": f"missing {needle!r}",
+                    }
+                    click.echo(f"  FAIL  [output]  {out.path}: missing {needle!r}")
                     failed += 1
             else:
-                click.echo(f"  SKIP  {out.path}: unknown check syntax {out.check!r}")
+                click.echo(f"  SKIP  [output]  {out.path}: unknown check syntax {out.check!r}")
         else:
-            click.echo(f"  PASS  {out.path}: exists")
+            results[label] = {"category": "output", "passed": True, "output": "exists"}
+            click.echo(f"  PASS  [output]  {out.path}: exists")
             passed += 1
 
-    for chk in spec.checks:
-        try:
-            result = subprocess.run(
-                chk.run, shell=True, capture_output=True, text=True, timeout=120,
-            )
-            expect_code = 0
-            if chk.expect.startswith("exit "):
-                expect_code = int(chk.expect.split()[1])
-            if result.returncode == expect_code:
-                click.echo(f"  PASS  `{chk.run}` → exit {result.returncode}")
-                passed += 1
-            else:
-                click.echo(f"  FAIL  `{chk.run}` → exit {result.returncode} (expected {expect_code})")
-                if result.stderr.strip():
-                    for line in result.stderr.strip().splitlines()[:5]:
-                        click.echo(f"         {line}")
-                failed += 1
-        except subprocess.TimeoutExpired:
-            click.echo(f"  FAIL  `{chk.run}` → timeout")
+    for chk in spec.must_pass:
+        label = f"must_pass:{chk.run}"
+        ok, detail = _run_check(chk)
+        results[label] = {"category": "must_pass", "passed": ok, "output": detail}
+        if ok:
+            click.echo(f"  PASS  [must_pass]  `{chk.run}` → {detail}")
+            passed += 1
+        else:
+            click.echo(f"  FAIL  [must_pass]  `{chk.run}` → {detail}")
             failed += 1
 
-    click.echo(f"\n{passed} passed, {failed} failed")
+    for chk in spec.must_not_regress:
+        label = f"must_not_regress:{chk.run}"
+        ok, detail = _run_check(chk)
+        results[label] = {"category": "must_not_regress", "passed": ok, "output": detail}
+        if ok:
+            click.echo(f"  PASS  [must_not_regress]  `{chk.run}` → {detail}")
+            passed += 1
+        else:
+            click.echo(f"  FAIL  [must_not_regress]  `{chk.run}` → REGRESSION: {detail}")
+            failed += 1
+
+    if as_json:
+        click.echo(json.dumps(results, indent=2))
+    else:
+        must_pass_failed = sum(
+            1 for r in results.values() if r["category"] == "must_pass" and not r["passed"]
+        )
+        regressions = sum(
+            1 for r in results.values()
+            if r["category"] == "must_not_regress" and not r["passed"]
+        )
+        click.echo(f"\n{passed} passed, {failed} failed"
+                   f" ({must_pass_failed} must_pass failures, {regressions} regressions)")
+
     sys.exit(1 if failed else 0)
 
 

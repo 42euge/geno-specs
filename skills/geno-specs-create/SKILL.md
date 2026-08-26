@@ -65,7 +65,10 @@ Read the created spec file. Then help the user fill in the key sections interact
 2. **Inputs** — files the agent needs to read
 3. **Steps** — ordered execution steps (templates pre-fill these)
 4. **Outputs** — files that should exist/change when done
-5. **Checks** — commands to validate completion (e.g., `pytest`, `ruff check`)
+5. **Checks** — commands to validate completion (e.g., `pytest`, `ruff check`);
+   split into `must_pass` (must newly succeed — the default `--add-check`)
+   and `must_not_regress` (must have been passing before and still pass
+   after, via `--add-must-not-regress`)
 6. **Acceptance criteria** — human-readable done conditions
 7. **Agent requirements** — capabilities needed, preferred model
 
@@ -74,6 +77,7 @@ Use `geno-specs edit <id>` to add each piece:
 geno-specs edit <id> --add-input "src/auth.py:Current auth module"
 geno-specs edit <id> --add-output "src/auth.py:contains TokenRefresher"
 geno-specs edit <id> --add-check "pytest tests/:exit 0"
+geno-specs edit <id> --add-must-not-regress "pytest tests/test_session.py:exit 0"
 geno-specs edit <id> --add-step "Implement the refresh logic"
 geno-specs edit <id> --agent-cap python --agent-cap api
 ```

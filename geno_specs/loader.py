@@ -39,7 +39,10 @@ _TRANSITIONS: dict[str, set[str]] = {
 }
 
 # Flat-attr section types Spec carries directly; everything else → children_extra.
-_FLAT_SECTIONS = {"inputs", "outputs", "steps", "acceptance", "checks", "depends_on", "agent"}
+_FLAT_SECTIONS = {
+    "inputs", "outputs", "steps", "acceptance", "checks", "depends_on",
+    "must_not_regress", "agent",
+}
 
 
 # ─── ids + paths ──────────────────────────────────────────────────────
@@ -92,6 +95,10 @@ def spec_to_node(spec: Spec) -> Node:
         node.children.append(Node("checks", data={"items": list(spec.checks)}))
     if spec.depends_on:
         node.children.append(Node("depends_on", data={"items": list(spec.depends_on)}))
+    if spec.must_not_regress:
+        node.children.append(
+            Node("must_not_regress", data={"items": list(spec.must_not_regress)})
+        )
     if spec.agent.capabilities or spec.agent.model:
         node.children.append(Node("agent", data={"value": spec.agent}))
     # Extra sections preserved verbatim.
@@ -125,6 +132,8 @@ def node_to_spec(node: Node) -> Spec:
             spec.checks = list(child.data.get("items", []))
         elif child.type == "depends_on":
             spec.depends_on = list(child.data.get("items", []))
+        elif child.type == "must_not_regress":
+            spec.must_not_regress = list(child.data.get("items", []))
         elif child.type == "agent":
             spec.agent = child.data.get("value", AgentRequirements())
         else:
