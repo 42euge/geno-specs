@@ -47,7 +47,9 @@ geno-specs/
 │   ├── loader.py                  #   parse/dump, CRUD, transitions
 │   ├── paths.py                   #   scope resolution
 │   ├── renderer.py                #   render spec → agent prompt
-│   └── templates.py              #   built-in templates
+│   ├── templates.py               #   built-in templates
+│   ├── validator.py               #   shared output/check validation logic
+│   └── mcp_server.py              #   MCP server (stdio) exposing core commands as tools
 └── skills/
     ├── geno-specs/SKILL.md
     ├── geno-specs-create/SKILL.md
@@ -57,11 +59,12 @@ geno-specs/
     └── geno-specs-validate/SKILL.md
 ```
 
-## Entry point
+## Entry points
 
 ```toml
 [project.scripts]
 geno-specs = "geno_specs.cli:main"
+geno-specs-mcp = "geno_specs.mcp_server:main"
 ```
 
 ## Project scaffolding (`init`)
@@ -89,6 +92,12 @@ to `git log` in the target repo's cwd and reads its own README.md.
 Implemented in `geno_specs/scaffold.py` (`scaffold()`, `_read_readme()`,
 `_read_recent_commits()`) and wired into the `init` command in `cli.py` via
 the `--fill` flag.
+
+`geno-specs-mcp` starts an MCP server over stdio exposing `create_spec`,
+`list_specs`, `show_spec`, `mark_ready`, `run_spec`, and `validate_spec` as
+tools — thin wrappers over the same `loader`/`renderer`/`validator` functions
+`cli.py` calls, so the CLI and MCP surface never drift apart.
+
 
 ## Spec lifecycle
 

@@ -112,6 +112,33 @@ before trusting it.
 | `test` | Add or improve test coverage |
 | `review` | Code review with structured feedback |
 
+## MCP Server
+
+geno-specs also ships an [MCP](https://modelcontextprotocol.io) server so any
+MCP-aware agent client (Cursor, Codex, Claude Code, etc.) can drive specs
+without a client-specific plugin. It exposes `create_spec`, `list_specs`,
+`show_spec`, `mark_ready`, `run_spec`, and `validate_spec` as tools, each a
+thin wrapper over the same `loader`/`renderer`/`validator` functions the CLI
+uses.
+
+Run it directly:
+
+```bash
+geno-specs-mcp
+```
+
+Register it with an MCP client (generic `mcpServers` config):
+
+```json
+{
+  "mcpServers": {
+    "geno-specs": {
+      "command": "geno-specs-mcp"
+    }
+  }
+}
+```
+
 ## License
 
 MIT

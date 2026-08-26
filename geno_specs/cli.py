@@ -475,6 +475,7 @@ def validate(spec_id: str, as_json: bool, global_: bool, project_: bool):
         spec.last_failure = None
         loader.save(scope, spec)
 
+
     sys.exit(1 if failed else 0)
 
 
