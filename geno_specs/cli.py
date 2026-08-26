@@ -464,12 +464,13 @@ def validate(spec_id: str, as_json: bool, global_: bool, project_: bool):
         spec.last_failure = Failure(timestamp=now, checks=failure_checks)
         loader.save(scope, spec)
 
-        click.echo("\nwhy validation failed:")
-        for c in failure_checks:
-            detail = f"  - [{c.kind}] {c.target}: {c.message}"
-            if c.exit_code is not None:
-                detail += f" (exit {c.exit_code})"
-            click.echo(detail)
+        if not as_json:
+            click.echo("\nwhy validation failed:")
+            for c in failure_checks:
+                detail = f"  - [{c.kind}] {c.target}: {c.message}"
+                if c.exit_code is not None:
+                    detail += f" (exit {c.exit_code})"
+                click.echo(detail)
     elif spec.last_failure is not None:
         # Clean pass — drop the stale record from a previous attempt.
         spec.last_failure = None
